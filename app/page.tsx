@@ -103,6 +103,7 @@ export default function KendamaGame() {
 
     // 4. 紐
     const string = Constraint.create({
+      label: 'string',
       bodyA: handle,
       bodyB: ball,
       pointA: { x: 0, y: -80 },
@@ -152,6 +153,30 @@ export default function KendamaGame() {
       const target = targetRef.current
       const engine = engineRef.current
 
+      // 1. 紐の制御（これがリアルさの命！）
+    // 紐オブジェクトを探す（world.constraintsの中から）
+    const string = engine.world.constraints.find(c => c.label === 'string')
+    if (string) {
+      // 持ち手(handle)と玉(ball)の距離を計算
+      // ※ string.bodyAはhandleになっている前提
+      const anchor = string.bodyA!.position
+      const ballPos = ball.position
+      
+      const dist = Math.sqrt((anchor.x - ballPos.x)**2 + (anchor.y - ballPos.y)**2)
+      const stringLength = 300 // 設定した紐の長さと同じにする
+
+      if (dist < stringLength) {
+        // 紐がたるんでいる時：拘束力をほぼゼロにする（自由落下）
+        string.stiffness = 0.002 
+        // ※完全に0にするとバグることがあるので、ごくわずかに残すのがコツ
+        string.render.strokeStyle = '#ddd' // たるんでる時は色を薄くする演出
+      } else {
+        // 紐が伸びきった時：ガツンと引っ張る
+        string.stiffness = 0.9
+        string.render.strokeStyle = '#555' // ピンと張ったら濃くする
+      }
+    }
+
       // 玉のスピード
       const speed = Math.sqrt(ball.velocity.x ** 2 + ball.velocity.y ** 2)
 
@@ -181,7 +206,7 @@ export default function KendamaGame() {
       if (speed > 5 && gameState === 'success') {
         setGameState('playing')
       }
-    }, 50)
+    }, 20)
 
     return () => clearInterval(interval)
   }, [mode, gameState])
