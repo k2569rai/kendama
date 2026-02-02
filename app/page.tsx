@@ -2,39 +2,34 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Matter from 'matter-js'
-import { Play, Settings2, RefreshCw } from 'lucide-react'
+import { Play, RotateCw } from 'lucide-react'
 
-// 型定義
-type GameMode = 'cup' | 'spike' // 大皿モード or 剣先モード
+type GameMode = 'cup' | 'spike'
 
 export default function KendamaGame() {
   const sceneRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<Matter.Engine | null>(null)
   const ballRef = useRef<Matter.Body | null>(null)
-  const targetRef = useRef<Matter.Body | null>(null) // 皿または剣先
+  const targetRef = useRef<Matter.Body | null>(null)
 
   const [score, setScore] = useState(0)
   const [mode, setMode] = useState<GameMode>('cup')
   const [gameState, setGameState] = useState<'start' | 'playing' | 'success'>('start')
   const [debugInfo, setDebugInfo] = useState('')
 
-  // --- 1. 物理エンジンの初期化 & モード切替時の再描画 ---
+  // 物理エンジンのセットアップ
   useEffect(() => {
     if (!sceneRef.current) return
 
-    const { Engine, Render, World, Bodies, Constraint, Mouse, MouseConstraint, Runner, Composite } = Matter
+    const { Engine, Render, World, Bodies, Constraint, Mouse, MouseConstraint, Runner } = Matter
 
-    // エンジンがなければ作成（初回のみ）
-    if (!engineRef.current) {
-      engineRef.current = Engine.create()
-      // 重力調整
-      engineRef.current.world.gravity.y = 1.5
-    }
-    const engine = engineRef.current
-    const world = engine.world
+    const engine = Engine.create()
+    engineRef.current = engine
+    // 重力を少し強めにして、リアルな落下感を出す
+    engine.world.gravity.y = 1.8 
 
-    // レンダラー作成（再描画のたびにキャンバスが増えないように中身をクリア）
-    sceneRef.current.innerHTML = '' 
+    // レンダラー設定
+    sceneRef.current.innerHTML = ''
     const render = Render.create({
       element: sceneRef.current,
       engine: engine,
@@ -47,53 +42,41 @@ export default function KendamaGame() {
       }
     })
 
-    // 世界を一旦リセット（壁以外）
-    World.clear(world, false) // keepStatic=falseだと全部消えるので注意
-
-    // --- 物体の作成 ---
     const centerX = window.innerWidth / 2
     const bottomY = window.innerHeight
 
-    // 1. 持ち手（共通）
+    // --- 物体作成 ---
+
+    // 1. 持ち手
     const handle = Bodies.rectangle(centerX, bottomY - 100, 30, 200, {
       isStatic: true,
       render: { fillStyle: '#8B4513' }
     })
 
-    // 2. ターゲット（モードによって形を変える！）
+    // 2. ターゲット（大皿または剣先）
     let targetBody: Matter.Body
-
     if (mode === 'cup') {
-      // --- 大皿モード ---
-      // 皿の底
       const base = Bodies.rectangle(centerX, bottomY - 210, 100, 20, {
         isStatic: true,
+        label: 'cup_target',
         render: { fillStyle: '#A0522D' }
       })
-      // 左右の壁（こぼれ防止）
+      // こぼれ防止の壁（透明）
       const left = Bodies.rectangle(centerX - 55, bottomY - 230, 10, 60, { isStatic: true, render: { visible: false } })
       const right = Bodies.rectangle(centerX + 55, bottomY - 230, 10, 60, { isStatic: true, render: { visible: false } })
-      
-      targetBody = Matter.Body.create({
-        parts: [base, left, right],
-        isStatic: true,
-        label: 'cup_target'
-      })
+      targetBody = Matter.Body.create({ parts: [base, left, right], isStatic: true })
     } else {
-      // --- 剣先モード ---
-      // 細い棒
       targetBody = Bodies.rectangle(centerX, bottomY - 250, 15, 150, {
         isStatic: true,
         label: 'spike_target',
         render: { fillStyle: '#CD853F' }
       })
     }
-    
     targetRef.current = targetBody
 
     // 3. 玉
     const ball = Bodies.circle(centerX, bottomY - 400, 35, {
-      restitution: 0.5,
+      restitution: 0.4, // 跳ね返りすぎないように調整
       friction: 0.05,
       density: 0.04,
       label: 'ball',
@@ -101,28 +84,32 @@ export default function KendamaGame() {
     })
     ballRef.current = ball
 
-    // 4. 紐
+    // 4. 紐 (重要設定！)
+    const stringLength = 300
     const string = Constraint.create({
-      label: 'string',
+      label: 'string', // ★このラベルで後から探します
       bodyA: handle,
       bodyB: ball,
-      pointA: { x: 0, y: -80 },
-      length: 300,
-      stiffness: 0.1,
-      damping: 0.05,
-      render: { visible: true, strokeStyle: '#555', lineWidth: 3 }
+      pointA: { x: 0, y: -80 }, // 持ち手の先端から
+      length: stringLength,
+      stiffness: 0.001, // ★初期状態はダルダルにしておく
+      render: {
+        visible: true,
+        strokeStyle: '#888',
+        lineWidth: 3,
+        type: 'line' // バネのギザギザではなく、ただの線にする
+      }
     })
 
-    // 5. 壁（画面外落下防止）
+    // 5. 壁
     const wallOpts = { isStatic: true, render: { visible: false } }
-    const walls = [
-      Bodies.rectangle(centerX, -200, window.innerWidth * 2, 50, wallOpts),
+    World.add(engine.world, [
+      handle, targetBody, ball, string,
+      Bodies.rectangle(centerX, -500, window.innerWidth * 2, 50, wallOpts), // 天井高く
       Bodies.rectangle(-50, window.innerHeight / 2, 50, window.innerHeight * 2, wallOpts),
       Bodies.rectangle(window.innerWidth + 50, window.innerHeight / 2, 50, window.innerHeight * 2, wallOpts),
-      Bodies.rectangle(centerX, window.innerHeight + 100, window.innerWidth * 2, 50, wallOpts),
-    ]
-
-    World.add(world, [handle, targetBody, ball, string, ...walls])
+      Bodies.rectangle(centerX, window.innerHeight + 100, window.innerWidth * 2, 50, wallOpts)
+    ])
 
     // マウス操作（PC用）
     const mouse = Mouse.create(render.canvas)
@@ -130,112 +117,88 @@ export default function KendamaGame() {
       mouse: mouse,
       constraint: { stiffness: 0.2, render: { visible: false } }
     })
-    World.add(world, mouseConstraint)
+    World.add(engine.world, mouseConstraint)
 
-    // 実行
     Render.run(render)
     const runner = Runner.create()
     Runner.run(runner, engine)
 
+    // ★★★ 紐のたるみ処理 & ゲーム判定ループ ★★★
+    // 物理演算の更新ごとに実行されるイベント
+    Matter.Events.on(engine, 'beforeUpdate', () => {
+      if (!ball || !handle) return
+
+      // 1. 紐の制御（これがリアルさの命！）
+      // 持ち手の紐の付け根座標
+      const anchorX = handle.position.x
+      const anchorY = handle.position.y - 80 
+      
+      // 玉までの距離
+      const dist = Math.sqrt((ball.position.x - anchorX)**2 + (ball.position.y - anchorY)**2)
+
+      // 距離が紐の長さより短い = たるんでいる
+      if (dist < stringLength) {
+        string.stiffness = 0.002 // ほぼ力をゼロにする（自由落下）
+        string.render.strokeStyle = '#ddd' // たるんでる演出（薄い色）
+      } else {
+        // 伸びきった = 引っ張る
+        string.stiffness = 1 // ガツンと硬くする
+        string.render.strokeStyle = '#555' // ピンと張った色
+      }
+    })
+
     return () => {
       Render.stop(render)
       Runner.stop(runner)
-      if(runner) Runner.stop(runner)
+      World.clear(engine.world, false)
+      Engine.clear(engine)
     }
-  }, [mode]) // ★ modeが変わるたびに再実行される
+  }, [mode])
 
-  // --- 2. 判定ループ（吸着ロジック） ---
+  // --- 判定ループ（成功判定など） ---
   useEffect(() => {
     const interval = setInterval(() => {
-      if (!ballRef.current || !targetRef.current || !engineRef.current) return
+      if (!ballRef.current || !targetRef.current) return
 
       const ball = ballRef.current
       const target = targetRef.current
-      const engine = engineRef.current
-
-      // 1. 紐の制御（これがリアルさの命！）
-    // 紐オブジェクトを探す（world.constraintsの中から）
-    const string = engine.world.constraints.find(c => c.label === 'string')
-    if (string) {
-      // 持ち手(handle)と玉(ball)の距離を計算
-      // ※ string.bodyAはhandleになっている前提
-      const anchor = string.bodyA!.position
-      const ballPos = ball.position
-      
-      const dist = Math.sqrt((anchor.x - ballPos.x)**2 + (anchor.y - ballPos.y)**2)
-      const stringLength = 300 // 設定した紐の長さと同じにする
-
-      if (dist < stringLength) {
-        // 紐がたるんでいる時：拘束力をほぼゼロにする（自由落下）
-        string.stiffness = 0.002 
-        // ※完全に0にするとバグることがあるので、ごくわずかに残すのがコツ
-        string.render.strokeStyle = '#ddd' // たるんでる時は色を薄くする演出
-      } else {
-        // 紐が伸びきった時：ガツンと引っ張る
-        string.stiffness = 0.9
-        string.render.strokeStyle = '#555' // ピンと張ったら濃くする
-      }
-    }
-
-      // 玉のスピード
       const speed = Math.sqrt(ball.velocity.x ** 2 + ball.velocity.y ** 2)
 
       if (mode === 'cup') {
-        // --- 大皿判定 ---
         const dx = Math.abs(ball.position.x - target.position.x)
-        const dy = ball.position.y - (target.position.y - 40) // 皿の少し上
-        
-        // 皿に乗っていて、静止している
-        if (dx < 40 && Math.abs(dy) < 30 && speed < 2) {
-          handleSuccess(ball)
-        }
+        const dy = ball.position.y - (target.position.y - 40)
+        // 大皿判定
+        if (dx < 40 && Math.abs(dy) < 30 && speed < 2) handleSuccess(ball)
       } else {
-        // --- 剣先判定（マグネット） ---
-        // 剣の先端座標
-        const tipY = target.position.y - 75 
         const dx = Math.abs(ball.position.x - target.position.x)
-        const dy = Math.abs(ball.position.y - tipY)
-
-        // 先端に近くて、ある程度スピードが落ちていたら
-        if (dx < 25 && dy < 35 && speed < 8) {
-           handleSuccess(ball, true) // true = 吸着発動
-        }
+        const dy = Math.abs(ball.position.y - (target.position.y - 75))
+        // 剣先（マグネット判定）
+        if (dx < 20 && dy < 30 && speed < 8) handleSuccess(ball, true)
       }
 
-      // 成功状態から玉が離れたらプレイ中に戻す
-      if (speed > 5 && gameState === 'success') {
-        setGameState('playing')
-      }
-    }, 20)
-
+      // 復帰処理
+      if (gameState === 'success' && speed > 5) setGameState('playing')
+    }, 50)
     return () => clearInterval(interval)
   }, [mode, gameState])
 
-  // 成功時の処理
   const handleSuccess = (ball: Matter.Body, magnet = false) => {
     if (gameState === 'success') return
-
-    setScore(s => s + (mode === 'spike' ? 100 : 10)) // 剣先は高得点
+    setScore(s => s + (mode === 'spike' ? 100 : 10))
     setGameState('success')
-    if (navigator.vibrate) navigator.vibrate([50, 50, 50]) // 振動
+    if (navigator.vibrate) navigator.vibrate(50)
 
-    // マグネット処理：玉を強制的に固定する
     if (magnet && engineRef.current && targetRef.current) {
        const constraint = Matter.Constraint.create({
          bodyA: targetRef.current,
          bodyB: ball,
-         pointA: { x: 0, y: -75 }, // 剣先の位置
-         pointB: { x: 0, y: 0 },
-         stiffness: 0.5, // 強く固定
+         pointA: { x: 0, y: -75 },
+         stiffness: 0.5,
          length: 0,
          render: { visible: false }
        })
        Matter.World.add(engineRef.current.world, constraint)
-       
-       // 1秒後に拘束を解く（また遊べるように）
-       setTimeout(() => {
-         Matter.World.remove(engineRef.current!.world, constraint)
-       }, 1000)
+       setTimeout(() => Matter.World.remove(engineRef.current!.world, constraint), 1000)
     }
   }
 
@@ -254,13 +217,25 @@ export default function KendamaGame() {
   const startSensor = () => {
     setGameState('playing')
     window.addEventListener('devicemotion', (e) => {
-       if (!engineRef.current) return
+       if (!engineRef.current || !ballRef.current) return
+       
        const x = e.accelerationIncludingGravity?.x || 0
        const y = e.accelerationIncludingGravity?.y || 0
-       setDebugInfo(`X:${x.toFixed(1)} Y:${y.toFixed(1)}`)
-       // 重力制御
-       engineRef.current.world.gravity.x = -x * 0.25
-       // 縦持ちした時の角度補正などが必要ならここをいじる
+       
+       // 1. 基本の重力操作（傾き）
+       engineRef.current.world.gravity.x = -x * 0.3
+       // engineRef.current.world.gravity.y = y * 0.3 // 縦の重力は固定の方が遊びやすいかも
+
+       // 2. 「引き上げ」検知（重要！）
+       // スマホをクイッと上に上げた時 (y加速度が急にマイナスになる)
+       const accelY = e.acceleration?.y || 0
+       if (accelY > 5) { // 感度調整
+          // 玉に上方向の力を直接加える（膝を使う動きの再現）
+          Matter.Body.applyForce(ballRef.current, ballRef.current.position, { x: 0, y: -0.05 })
+          setDebugInfo('JUMP!')
+       } else {
+          setDebugInfo(`X:${x.toFixed(1)}`)
+       }
     })
   }
 
@@ -268,59 +243,36 @@ export default function KendamaGame() {
     <div className="fixed inset-0 overflow-hidden bg-slate-100 touch-none select-none">
       <div ref={sceneRef} className="absolute inset-0" />
 
-      {/* モード切替UI */}
+      {/* UI: モード切替 */}
       <div className="absolute top-4 right-4 z-10 flex gap-2">
-        <button 
-          onClick={() => setMode('cup')}
-          className={`p-3 rounded-xl font-bold transition shadow-md ${mode === 'cup' ? 'bg-red-600 text-white scale-110' : 'bg-white text-gray-500'}`}
-        >
-          大皿
-        </button>
-        <button 
-          onClick={() => setMode('spike')}
-          className={`p-3 rounded-xl font-bold transition shadow-md ${mode === 'spike' ? 'bg-orange-500 text-white scale-110' : 'bg-white text-gray-500'}`}
-        >
-          剣先
-        </button>
+        <button onClick={() => setMode('cup')} className={`px-4 py-2 rounded-full font-bold shadow ${mode === 'cup' ? 'bg-red-600 text-white' : 'bg-white'}`}>大皿</button>
+        <button onClick={() => setMode('spike')} className={`px-4 py-2 rounded-full font-bold shadow ${mode === 'spike' ? 'bg-orange-500 text-white' : 'bg-white'}`}>剣先</button>
       </div>
 
-      {/* スコア・通知 */}
-      <div className="absolute top-6 left-6 z-10 pointer-events-none">
-        <div className="bg-white/80 backdrop-blur px-4 py-2 rounded-lg shadow border border-gray-200">
-          <span className="text-xs font-bold text-gray-500 block">SCORE</span>
-          <span className="text-3xl font-black text-gray-800">{score}</span>
-        </div>
+      {/* スコア */}
+      <div className="absolute top-6 left-6 z-10 bg-white/80 px-4 py-2 rounded-xl shadow">
+        <span className="text-xs font-bold text-gray-500 block">SCORE</span>
+        <span className="text-3xl font-black text-gray-800">{score}</span>
       </div>
-      
-      {gameState === 'success' && (
-        <div className="absolute top-1/3 w-full text-center z-20 pointer-events-none">
-          <div className="text-6xl font-black text-red-500 drop-shadow-xl animate-bounce">
-             {mode === 'spike' ? 'SPIKE!!' : 'GREAT!'}
-          </div>
-        </div>
-      )}
 
       {/* スタート画面 */}
       {gameState === 'start' && (
         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
-          <h1 className="text-white text-5xl font-bold mb-8 drop-shadow-lg tracking-tighter">KENDAMA</h1>
-          <button
-            onClick={requestPermission}
-            className="flex items-center gap-3 bg-red-600 text-white px-10 py-5 rounded-full font-bold text-2xl shadow-xl hover:scale-105 transition animate-pulse"
-          >
-            <Play fill="currentColor" size={32} /> PLAY
+          <h1 className="text-white text-5xl font-bold mb-8">KENDAMA</h1>
+          <button onClick={requestPermission} className="bg-red-600 text-white px-10 py-5 rounded-full font-bold text-2xl shadow-xl hover:scale-105 transition flex items-center gap-2">
+            <Play fill="currentColor" /> PLAY
           </button>
-          <div className="mt-8 text-gray-300 text-center text-sm">
-            <p>スマホを振って玉を操ろう</p>
-            <p>Please enable motion sensors</p>
-          </div>
         </div>
       )}
 
-      {/* デバッグ用 */}
-      <div className="absolute bottom-2 right-2 text-[10px] text-gray-400 font-mono">
-        {debugInfo}
-      </div>
+      {/* 成功エフェクト */}
+      {gameState === 'success' && (
+        <div className="absolute top-1/3 w-full text-center pointer-events-none animate-bounce">
+           <span className="text-6xl font-black text-red-500 drop-shadow-xl stroke-white">{mode === 'spike' ? 'SPIKE!!' : 'GREAT!'}</span>
+        </div>
+      )}
+
+      <div className="absolute bottom-2 left-2 text-xs text-gray-400 font-mono">{debugInfo}</div>
     </div>
   )
 }
