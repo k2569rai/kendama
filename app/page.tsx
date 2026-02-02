@@ -219,22 +219,32 @@ export default function KendamaGame() {
     window.addEventListener('devicemotion', (e) => {
        if (!engineRef.current || !ballRef.current) return
        
+       // 重力コントロール（これは今のままでOK）
        const x = e.accelerationIncludingGravity?.x || 0
        const y = e.accelerationIncludingGravity?.y || 0
-       
-       // 1. 基本の重力操作（傾き）
        engineRef.current.world.gravity.x = -x * 0.3
-       // engineRef.current.world.gravity.y = y * 0.3 // 縦の重力は固定の方が遊びやすいかも
-
-       // 2. 「引き上げ」検知（重要！）
-       // スマホをクイッと上に上げた時 (y加速度が急にマイナスになる)
+       
+       // ★★★ ここから修正版ジャンプ処理 ★★★
+       
+       // 1. センサーの値を取る（nullチェック付き）
        const accelY = e.acceleration?.y || 0
-       if (accelY > 5) { // 感度調整
-          // 玉に上方向の力を直接加える（膝を使う動きの再現）
-          Matter.Body.applyForce(ballRef.current, ballRef.current.position, { x: 0, y: -0.05 })
-          setDebugInfo('JUMP!')
+       const accelZ = e.acceleration?.z || 0 
+
+       // 2. 「クイッ」の判定（Y軸 または Z軸）
+       // 少し緩めの「3」に設定（反応しすぎなら 5 に戻してください）
+       if (accelY > 3 || accelZ > 3) { 
+          
+          // 3. 強制的に速度を与える（これが一番確実！）
+          // 今の横方向の動きはそのままに、縦方向(y)だけ「-15」の速度で打ち上げる
+          Matter.Body.setVelocity(ballRef.current, { 
+            x: ballRef.current.velocity.x, 
+            y: -20 // 数字が大きいほど高く飛びます（-15 〜 -25くらいがおすすめ）
+          })
+          
+          setDebugInfo('🚀 LAUNCH!!')
        } else {
-          setDebugInfo(`X:${x.toFixed(1)}`)
+          // 普段は数値を表示
+          setDebugInfo(`Y:${accelY.toFixed(1)} Z:${accelZ.toFixed(1)}`)
        }
     })
   }
